@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>学生成绩查询终端</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        :root { --bg-color: #f4f4f4; --fg-color: #000; --green: #00aa00; --red: #ee0000; }
+        body { 
+            background-color: var(--bg-color); 
+            color: var(--fg-color); 
+            font-family: 'Courier New', Courier, monospace; 
+            margin: 0; 
+            padding: 15px; /* 缩小了外边距，给手机留出更多空间 */
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+        }
+        
+        .box { 
+            background: #fff; 
+            border: 3px solid #000; 
+            padding: 25px; 
+            box-shadow: 6px 6px 0px #000; 
+            width: 100%; 
+            max-width: 500px; /* PC 端限制最大宽度，手机端自动占满 */
+            margin-top: 10px; 
+            box-sizing: border-box; 
+        }
+        
+        h2 { border-bottom: 2px solid #000; padding-bottom: 5px; margin-top: 0; font-size: 22px; }
+        
+        /* 表单元素适配：变大、好点按 */
+        input, select { 
+            width: 100%; 
+            padding: 12px; 
+            border: 2px solid #000; 
+            font-family: inherit; 
+            font-size: 16px; 
+            margin-bottom: 15px; 
+            box-sizing: border-box; 
+            background: #fff;
+            border-radius: 0; /* 清除苹果手机默认的圆角 */
+            appearance: none; /* 清除默认下拉框样式以统一UI */
+        }
+        
+        button { 
+            background: #000; 
+            color: #fff; 
+            border: 2px solid #000; 
+            padding: 14px 20px; 
+            cursor: pointer; 
+            font-weight: bold; 
+            width: 100%; 
+            font-size: 16px; 
+            font-family: inherit;
+            transition: 0.1s;
+            border-radius: 0;
+        }
+        button:active { transform: translateY(2px); background: #333; }
+        
+        /* 电脑端默认网格：5列 */
+        .ans-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 15px 0; }
+        .ans-cell { 
+            border: 2px solid #000; 
+            padding: 8px 2px; 
+            font-size: 13px; 
+            text-align: center; 
+            cursor: pointer; 
+            user-select: none; /* 防止手机端双击选中文本 */
+            -webkit-tap-highlight-color: transparent; /* 去除手机端点击时的蓝色高亮闪烁 */
+        }
+        .ans-cell:hover { background: #e0e0e0; }
+        .ans-cell.active-cell { background: #000; color: #fff; }
+        
+        .analysis-box { background: #fffbe6; border: 2px dashed #000; padding: 15px; display: none; }
+        
+        /* ========================================
+           📱 移动端专属适配 (当屏幕宽度小于 480px 时生效)
+           ======================================== */
+        @media (max-width: 480px) {
+            body { padding: 10px; }
+            .box { padding: 15px; box-shadow: 4px 4px 0px #000; }
+            .ans-grid { 
+                grid-template-columns: repeat(2, 1fr); /* 手机端变成 2 列，防止挤在一起 */
+                gap: 8px;
+            }
+            .ans-cell { 
+                padding: 12px 5px; /* 增加上下内边距，方便粗手指点击 */
+                font-size: 15px;   /* 字体稍微放大 */
+                font-weight: bold;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="box" id="login-section">
+    <h2>STUDENT LOGIN</h2>
+    <p id="status-text" style="color:#ee0000; font-weight:bold;">正在连接云端数据库...</p>
+    
+    <div id="form-area" style="display:none;">
+        <label>班级访问密码：</label>
+        <input type="password" id="classPwd" placeholder="请输入老师给的密码">
+        
+        <label>选择考试场次：</label>
+        <select id="examSelect"></select>
+        
+        <label>学生姓名：</label>
+        <input type="text" id="stuName" placeholder="如：张三">
+        
+        <button onclick="doSearch()">查询成绩与解析</button>
+    </div>
+</div>
+
+<div class="box" id="report-section" style="display:none;">
+    <h2 id="display-name" style="font-size:26px; margin-bottom: 5px;"></h2>
+    <div id="display-class" style="margin-bottom: 10px; border-bottom: 2px solid #000; padding-bottom:10px; font-weight: bold;"></div>
+    <div style="font-size:12px; color:#666; margin-bottom: 15px;">>> 提示：点击下方题号格子，即可查看错题解析。</div>
+    <div id="rounds-container"></div>
+    <button onclick="location.reload()" style="margin-top:20px; background:#fff; color:#000;">退出系统</button>
+</div>
+
+<script>
+// ！！！老师请注意：部署前一定要把这两行改成你自己的信息！！！
+const GITHUB_OWNER = "butterfly5177"; 
+const GITHUB_REPO = "my-class";
+
+let encryptedCloudData = ""; 
+let decryptedAllExams = {};
+
+window.onload = async () => {
+    // 拉取最新的数据
+    const url = `https://cdn.jsdelivr.net/gh/${GITHUB_OWNER}/${GITHUB_REPO}@main/data.json?t=${new Date().getTime()}`;
+    try {
+        const res = await fetch(url);
+        if(!res.ok) throw new Error("文件不存在");
+        
+        encryptedCloudData = await res.text();
+        
+        document.getElementById('status-text').innerText = "✔ 云端数据已连接，请输入密码解密";
+        document.getElementById('status-text').style.color = "#00aa00";
+        document.getElementById('form-area').style.display = "block";
+    } catch (e) {
+        document.getElementById('status-text').innerText = "✖ 连接云端失败，请联系老师确认数据已发布。";
+    }
+};
+
+function doSearch() {
+    const pwd = document.getElementById('classPwd').value.trim();
+    const name = document.getElementById('stuName').value.trim();
+    if (!pwd || !name) return alert("密码和姓名不能为空！");
+
+    try {
+        if (Object.keys(decryptedAllExams).length === 0) {
+            const bytes = CryptoJS.AES.decrypt(encryptedCloudData, pwd);
+            const decryptedStr = bytes.toString(CryptoJS.enc.Utf8);
+            if(!decryptedStr) throw new Error("密码错误");
+            decryptedAllExams = JSON.parse(decryptedStr);
+            
+            const select = document.getElementById('examSelect');
+            Object.keys(decryptedAllExams).reverse().forEach(examName => {
+                select.add(new Option(examName, examName));
+            });
+            alert("✅ 密码正确！已解锁考试列表，请选择场次后再点一次查询！");
+            return; 
+        }
+    } catch (e) {
+        return alert("班级访问密码错误，无法解密数据！");
+    }
+
+    const selectedExam = document.getElementById('examSelect').value;
+    const studentData = decryptedAllExams[selectedExam][name];
+
+    if (studentData) {
+        document.getElementById('login-section').style.display = 'none';
+        renderCard(name, studentData);
+    } else {
+        alert(`在【${selectedExam}】中未找到名为“${name}”的成绩！`);
+    }
+}
+
+function renderCard(name, s) {
+    document.getElementById('report-section').style.display = 'block';
+    document.getElementById('display-name').innerText = name;
+    document.getElementById('display-class').innerText = `班级：${s.c}`;
+
+    let html = '';
+    [1, 2].forEach(rNum => {
+        if (s[`s${rNum}`] && s[`s${rNum}`] !== '-') {
+            html += `<div style="margin-top:20px; border-top:2px dashed #000; padding-top:10px;">
+                        <div style="font-weight:bold; background:#000; color:#fff; display:inline-block; padding:4px 8px; font-size: 14px;">R${rNum} 分数: ${s[`s${rNum}`]}</div>
+                        <div class="ans-grid" id="grid-${rNum}">`;
+            
+            for(let i=1; i<=10; i++) {
+                const item = s[`a${rNum}`] ? s[`a${rNum}`][i] : null;
+                if(!item) continue;
+                html += `<div class="ans-cell" id="cell-${rNum}-${i}" onclick="showAnalysis(${rNum}, ${i}, ${s[`a${rNum}`][i].ok}, '${s[`n${rNum}`]?s[`n${rNum}`][i]?.correct:''}', '${s[`n${rNum}`]?s[`n${rNum}`][i]?.info:''}')">
+                            Q${i}:${item.a} ${item.ok?'✔':'✖'}
+                        </div>`;
+            }
+            html += `</div>
+                    <div class="analysis-box" id="ana-box-${rNum}">
+                        <div id="ana-content-${rNum}" style="font-size:15px; line-height:1.6;"></div>
+                    </div></div>`;
+        }
+    });
+    document.getElementById('rounds-container').innerHTML = html;
+}
+
+function showAnalysis(round, qIdx, isOk, correctAns, info) {
+    const grid = document.getElementById(`grid-${round}`);
+    for(let c of grid.getElementsByClassName('ans-cell')) c.classList.remove('active-cell');
+    document.getElementById(`cell-${round}-${qIdx}`).classList.add('active-cell');
+
+    const box = document.getElementById(`ana-box-${round}`);
+    const content = document.getElementById(`ana-content-${round}`);
+    box.style.display = 'block';
+
+    if(isOk) {
+        content.innerHTML = `<span style="color:#00aa00; font-weight:bold;">第 ${qIdx} 题：回答正确！ ✔</span>`;
+    } else {
+        content.innerHTML = `<div style="font-weight:bold; color:#ee0000; border-bottom:1px solid #ccc; margin-bottom:8px; padding-bottom:5px;">第 ${qIdx} 题正确答案: ${correctAns || '?'}</div>
+                             <div>${info && info!=='undefined' ? info : '老师未录入详细解析'}</div>`;
+    }
+}
+</script>
+
+</body>
+</html>
