@@ -16,12 +16,12 @@
         button:active { background: #444; transform: translateY(2px); }
         .ans-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 15px 0; }
         @media (max-width: 480px) { .ans-grid { grid-template-columns: repeat(2, 1fr); } }
-        .ans-cell { border: 2px solid #000; padding: 10px 2px; font-size: 14px; text-align: center; cursor: pointer; transition: 0.2s; }
+        .ans-cell { border: 2px solid #000; padding: 10px 2px; font-size: 14px; text-align: center; cursor: pointer; transition: 0.2s; user-select: none; -webkit-tap-highlight-color: transparent; }
         .ans-cell.active-cell { background: #000; color: #fff; }
         .mark { font-weight: bold; margin-left: 3px; }
         .mark.right { color: var(--green); }
         .mark.wrong { color: var(--red); }
-        .analysis-box { background: #fffbe6; border: 2px dashed #000; padding: 15px; display: none; margin-top: 10px; font-size: 15px; line-height: 1.6; }
+        .analysis-box { background: #fffbe6; border: 2px dashed #000; padding: 15px; display: none; margin-top: 10px; font-size: 15px; }
         .status-msg { font-size: 14px; font-weight: bold; margin-bottom: 15px; }
     </style>
 </head>
@@ -50,12 +50,18 @@
 </div>
 
 <script>
+// ==========================================
+// ⚠️ 老师请注意：如果换了仓库，这里必须修改！
 const GITHUB_OWNER = "butterfly5117"; 
 const GITHUB_REPO = "my-class";
+// ==========================================
+
 let encryptedCloudData = ""; 
 let decryptedAllExams = {};
+let currentStudentData = null; // 新增：将当前学生数据保存在内存中，避免渲染冲突
 
 window.onload = async () => {
+    // 使用 fastly CDN，添加时间戳强行穿透缓存
     const url = `https://fastly.jsdelivr.net/gh/${GITHUB_OWNER}/${GITHUB_REPO}/data.json?t=${new Date().getTime()}`;
     const statusEl = document.getElementById('status-text');
     try {
@@ -64,10 +70,15 @@ window.onload = async () => {
         try {
             const json = JSON.parse(rawContent);
             encryptedCloudData = json.content ? json.content.replace(/\s/g, '') : rawContent;
-        } catch(e) { encryptedCloudData = rawContent.replace(/\s/g, ''); }
-        statusEl.innerText = "✅ 云端已连接"; statusEl.style.color = "var(--green)";
+        } catch(e) { 
+            encryptedCloudData = rawContent.replace(/\s/g, ''); 
+        }
+        statusEl.innerText = "✅ 云端已连接"; 
+        statusEl.style.color = "var(--green)";
         document.getElementById('form-area').style.display = "block";
-    } catch (e) { statusEl.innerText = "❌ 无法连接: " + e.message; }
+    } catch (e) { 
+        statusEl.innerText = "❌ 无法连接: " + e.message; 
+    }
 };
 
 function unlockExams() {
@@ -75,41 +86,56 @@ function unlockExams() {
     try {
         const bytes = CryptoJS.AES.decrypt(encryptedCloudData, pwd);
         const decryptedStr = bytes.toString(CryptoJS.enc.Utf8);
+        if(!decryptedStr) throw new Error();
         decryptedAllExams = JSON.parse(decryptedStr);
         const select = document.getElementById('examSelect');
         select.innerHTML = "";
         Object.keys(decryptedAllExams).reverse().forEach(name => select.add(new Option(name, name)));
         return true;
-    } catch (e) { alert("🔑 密码错误！"); return false; }
+    } catch (e) { 
+        alert("🔑 密码错误！无法解密数据。"); 
+        return false; 
+    }
 }
 
 function doSearch() {
     const name = document.getElementById('stuName').value.trim();
     if (!name) return alert("姓名不能为空！");
-    if (Object.keys(decryptedAllExams).length === 0) { if(!unlockExams()) return; }
+    if (Object.keys(decryptedAllExams).length === 0) { 
+        if(!unlockExams()) return; 
+    }
+    
     const selectedExam = document.getElementById('examSelect').value;
     const allStudents = decryptedAllExams[selectedExam];
     const matchedKey = Object.keys(allStudents).find(k => k.includes(name) || name.includes(k));
+    
     if (matchedKey) {
         document.getElementById('login-section').style.display = 'none';
-        renderReport(matchedKey, allStudents[matchedKey]);
-    } else { alert(`❌ 未找到成绩`); }
+        currentStudentData = allStudents[matchedKey]; // 将数据存入全局变量
+        renderReport(matchedKey, currentStudentData);
+    } else { 
+        alert(`❌ 未找到成绩，请确认姓名无误。`); 
+    }
 }
 
 function renderReport(name, s) {
     document.getElementById('report-section').style.display = 'block';
     document.getElementById('display-name').innerText = name;
     document.getElementById('display-info').innerText = `班级：${s.c} | 学号：${s.id || '无'}`;
+    
     let html = '';
     [1, 2].forEach(num => {
         if (s[`s${num}`] && s[`s${num}`] !== '-') {
             html += `<div style="margin-top:20px; border-top:2px dashed #000; padding-top:15px;">
                         <div style="font-weight:bold; background:#000; color:#fff; display:inline-block; padding:4px 10px;">R${num} 成绩: ${s[`s${num}`]}</div>
-                        <div class="ans-grid">`;
-            const ans = s[`a${num}`]; const ana = s[`n${num}`];
+                        <div class="ans-grid" id="grid-${num}">`;
+                        
+            const ans = s[`a${num}`]; 
             for(let i=1; i<=10; i++) {
-                const item = ans ? ans[i] : null; if(!item) continue;
-                html += `<div class="ans-cell" id="cell-${num}-${i}" onclick="showAna(${num}, ${i}, '${ana?.[i]?.correct || ''}', '${ana?.[i]?.info || ''}')">
+                const item = ans ? ans[i] : null; 
+                if(!item) continue;
+                // 彻底移除传递大段文字的逻辑，只传递轮次和题号
+                html += `<div class="ans-cell" id="cell-${num}-${i}" onclick="showAna(${num}, ${i})">
                             Q${i}:${item.a}<span class="mark ${item.ok?'right':'wrong'}">${item.ok?'✔':'✖'}</span>
                         </div>`;
             }
@@ -119,40 +145,41 @@ function renderReport(name, s) {
     document.getElementById('rounds-container').innerHTML = html;
 }
 
-// 修改后的解析显示函数：无论对错均显示正确答案和解析
-function showAna(round, qIdx, correct, info) {
-    // 1. 只清除【当前这一轮】格子的选中状态，不影响其他轮次
-    const currentGrid = document.getElementById(`grid-${round}`) || document.getElementById('rounds-container');
-    const cells = currentGrid.querySelectorAll(`.ans-cell`);
-    cells.forEach(c => c.classList.remove('active-cell'));
-
+// 终极修复版的展示逻辑：直接从内存中读取数据，彻底规避 HTML 注入冲突
+function showAna(round, qIdx) {
+    // 1. 清除当前轮次的所有高亮格子，保留其他轮次的独立状态
+    const currentGrid = document.getElementById(`grid-${round}`);
+    if(currentGrid) {
+        const cells = currentGrid.querySelectorAll(`.ans-cell`);
+        cells.forEach(c => c.classList.remove('active-cell'));
+    }
+    
     // 2. 高亮当前点击的格子
     const targetCell = document.getElementById(`cell-${round}-${qIdx}`);
-    if (targetCell) {
-        targetCell.classList.add('active-cell');
-    }
+    if(targetCell) targetCell.classList.add('active-cell');
 
-    // 3. 更新对应的解析框内容
+    // 3. 从全局内存变量中安全提取解析数据
+    const anaData = currentStudentData[`n${round}`];
+    const correct = anaData?.[qIdx]?.correct || '';
+    const info = anaData?.[qIdx]?.info || '';
+
+    // 4. 渲染到对应的解析框中
     const box = document.getElementById(`ana-box-${round}`);
-    if (box) {
-        box.style.display = 'block';
-        // 使用 innerHTML 重新渲染内容，确保每次点击都刷新
-        box.innerHTML = `
-            <div style="color:var(--theme); font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ddd; padding-bottom:5px;">
-                第 ${qIdx} 题 详情
-            </div>
-            <div style="margin-bottom:8px;">
-                <span style="font-weight:bold;">正确答案：</span>
-                <span style="color:var(--green); font-size:18px; font-weight:bold;">${correct || '未录入'}</span>
-            </div>
-            <div style="color:#333; text-align:justify;">
-                <span style="font-weight:bold;">详细解析：</span>${info || '老师暂未提供详细解析内容。'}
-            </div>
-        `;
-        
-        // 4. 手机端自动滚动到解析区域（可选，增强体验）
-        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
+    box.style.display = 'block';
+    
+    // 注意 style="white-space: pre-wrap;" 可以完美保留老师录入的回车换行
+    box.innerHTML = `
+        <div style="color:var(--theme); font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ddd; padding-bottom:5px;">
+            第 ${qIdx} 题 详情
+        </div>
+        <div style="margin-bottom:8px;">
+            <span style="font-weight:bold;">正确答案：</span>
+            <span style="color:var(--green); font-size:16px; font-weight:bold;">${correct || '未录入'}</span>
+        </div>
+        <div style="color:#333; line-height: 1.6; white-space: pre-wrap; text-align: justify;">
+            <span style="font-weight:bold;">详细解析：</span>${info || '老师暂未提供详细解析内容。'}
+        </div>
+    `;
 }
 </script>
 </body>
