@@ -121,17 +121,38 @@ function renderReport(name, s) {
 
 // 修改后的解析显示函数：无论对错均显示正确答案和解析
 function showAna(round, qIdx, correct, info) {
-    const cells = document.querySelectorAll(`.ans-cell`);
+    // 1. 只清除【当前这一轮】格子的选中状态，不影响其他轮次
+    const currentGrid = document.getElementById(`grid-${round}`) || document.getElementById('rounds-container');
+    const cells = currentGrid.querySelectorAll(`.ans-cell`);
     cells.forEach(c => c.classList.remove('active-cell'));
-    document.getElementById(`cell-${round}-${qIdx}`).classList.add('active-cell');
 
+    // 2. 高亮当前点击的格子
+    const targetCell = document.getElementById(`cell-${round}-${qIdx}`);
+    if (targetCell) {
+        targetCell.classList.add('active-cell');
+    }
+
+    // 3. 更新对应的解析框内容
     const box = document.getElementById(`ana-box-${round}`);
-    box.style.display = 'block';
-    
-    // 统一展示逻辑
-    box.innerHTML = `<div style="color:var(--theme); font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ddd; padding-bottom:5px;">第 ${qIdx} 题 详情</div>
-                     <div style="margin-bottom:8px;"><span style="font-weight:bold;">正确答案：</span><span style="color:var(--green); font-weight:bold;">${correct || '未录入'}</span></div>
-                     <div style="color:#333;"><span style="font-weight:bold;">详细解析：</span>${info || '老师暂未提供详细解析内容。'}</div>`;
+    if (box) {
+        box.style.display = 'block';
+        // 使用 innerHTML 重新渲染内容，确保每次点击都刷新
+        box.innerHTML = `
+            <div style="color:var(--theme); font-weight:bold; margin-bottom:5px; border-bottom:1px solid #ddd; padding-bottom:5px;">
+                第 ${qIdx} 题 详情
+            </div>
+            <div style="margin-bottom:8px;">
+                <span style="font-weight:bold;">正确答案：</span>
+                <span style="color:var(--green); font-size:18px; font-weight:bold;">${correct || '未录入'}</span>
+            </div>
+            <div style="color:#333; text-align:justify;">
+                <span style="font-weight:bold;">详细解析：</span>${info || '老师暂未提供详细解析内容。'}
+            </div>
+        `;
+        
+        // 4. 手机端自动滚动到解析区域（可选，增强体验）
+        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
 }
 </script>
 </body>
